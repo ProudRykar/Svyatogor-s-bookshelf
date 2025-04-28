@@ -30,6 +30,9 @@ void Database::save() {
 
     size_t name_count = names.size();
     out.write(reinterpret_cast<char*>(&name_count), sizeof(name_count));
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Saving " << name_count << " names\n";
+    }
     for (const auto& name : names) {
         out.write(reinterpret_cast<const char*>(&name.name_id), sizeof(name.name_id));
         size_t name_len = name.name.size();
@@ -37,20 +40,34 @@ void Database::save() {
         std::string encrypted_name = name.name;
         encrypt_decrypt(encrypted_name);
         out.write(encrypted_name.c_str(), name_len);
+        if (log_mode == 2 || log_mode == 3) {
+            std::cout << "Saving name: ID=" << name.name_id << ", Name=" << name.name << "\n";
+        }
     }
 
     size_t record_count = records.size();
     out.write(reinterpret_cast<char*>(&record_count), sizeof(record_count));
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Saving " << record_count << " records\n";
+    }
     for (const auto& record : records) {
         out.write(reinterpret_cast<const char*>(&record.id), sizeof(record.id));
         out.write(reinterpret_cast<const char*>(&record.name_id), sizeof(record.name_id));
         out.write(reinterpret_cast<const char*>(&record.value), sizeof(record.value));
+        if (log_mode == 2 || log_mode == 3) {
+            std::cout << "Saving record: ID=" << record.id << ", NameID=" << record.name_id << ", Value=" << record.value << "\n";
+        }
     }
 }
 
 void Database::load() {
     std::ifstream in(filename, std::ios::binary);
-    if (!in) return;
+    if (!in) {
+        if (log_mode == 2 || log_mode == 3) {
+            std::cout << "No database file found, starting with empty database\n";
+        }
+        return;
+    }
 
     names.clear();
     records.clear();
@@ -61,6 +78,9 @@ void Database::load() {
 
     size_t name_count;
     in.read(reinterpret_cast<char*>(&name_count), sizeof(name_count));
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Loading " << name_count << " names\n";
+    }
     for (size_t i = 0; i < name_count; ++i) {
         Name n;
         in.read(reinterpret_cast<char*>(&n.name_id), sizeof(n.name_id));
@@ -73,10 +93,16 @@ void Database::load() {
         names.push_back(n);
         name_id_index[n.name_id] = names.size() - 1;
         name_index[n.name] = n.name_id;
+        if (log_mode == 2 || log_mode == 3) {
+            std::cout << "Loaded name: ID=" << n.name_id << ", Name=" << n.name << "\n";
+        }
     }
 
     size_t record_count;
     in.read(reinterpret_cast<char*>(&record_count), sizeof(record_count));
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Loading " << record_count << " records\n";
+    }
     for (size_t i = 0; i < record_count; ++i) {
         Record r;
         in.read(reinterpret_cast<char*>(&r.id), sizeof(r.id));
@@ -85,6 +111,9 @@ void Database::load() {
         records.push_back(r);
         id_index[r.id] = records.size() - 1;
         name_id_record_index[r.name_id].push_back(records.size() - 1);
+        if (log_mode == 2 || log_mode == 3) {
+            std::cout << "Loaded record: ID=" << r.id << ", NameID=" << r.name_id << ", Value=" << r.value << "\n";
+        }
     }
 }
 
@@ -133,6 +162,10 @@ bool Database::add_record(int id, const std::string& name, double value) {
     records.push_back({id, name_id, value});
     id_index[id] = records.size() - 1;
     name_id_record_index[name_id].push_back(records.size() - 1);
+
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Added record: ID=" << id << ", Name=" << name << ", NameID=" << name_id << ", Value=" << value << "\n";
+    }
 
     auto end = std::chrono::high_resolution_clock::now();
     double duration_ms = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
@@ -255,7 +288,7 @@ bool Database::find_records_by_value(double value, std::vector<int>& ids, std::v
     values.clear();
 
     for (const auto& record : records) {
-        if (std::abs(record.value - value) < 1e-6) { // Учитываем погрешность для чисел с плавающей точкой
+        if (std::abs(record.value - value) < 1e-6) {
             auto name_it = name_id_index.find(record.name_id);
             if (name_it != name_id_index.end()) {
                 ids.push_back(record.id);
@@ -323,25 +356,18 @@ bool Database::update_record(int id, const std::string& name, double value) {
 
     size_t idx = it->second;
     int old_name_id = records[idx].name_id;
-    int new_name_id = get_or_create_name_id(name);
-    records[idx].name_id = new_name_id;
-    records[idx].value = value;
-
-    name_id_record_index[old_name_id].erase(
-        std::remove(name_id_record_index[old_name_id].begin(), name_id_record_index[old_name_id].end(), idx),
-        name_id_record_index[old_name_id].end()
-    );
-    if (name_id_record_index[old_name_id].empty()) {
-        auto name_it = name_id_index.find(old_name_id);
-        if (name_it != name_id_index.end()) {
-            size_t name_idx = name_it->second;
-            std::string old_name = names[name_idx].name;
-            names.erase(names.begin() + name_idx);
-            name_id_index.erase(old_name_id);
-            name_index.erase(old_name);
-        }
+    auto old_name_it = name_id_index.find(old_name_id);
+    std::string old_name = old_name_it != name_id_index.end() ? names[old_name_it->second].name : "";
+    if (old_name != name) {
+        name_id_record_index[old_name_id].erase(
+            std::remove(name_id_record_index[old_name_id].begin(), name_id_record_index[old_name_id].end(), idx),
+            name_id_record_index[old_name_id].end()
+        );
+        int new_name_id = get_or_create_name_id(name);
+        records[idx].name_id = new_name_id;
+        name_id_record_index[new_name_id].push_back(idx);
     }
-    name_id_record_index[new_name_id].push_back(idx);
+    records[idx].value = value;
 
     auto end = std::chrono::high_resolution_clock::now();
     double duration_ms = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
@@ -357,13 +383,54 @@ void Database::get_all_records(std::vector<int>& ids, std::vector<std::string>& 
     ids.clear();
     names.clear();
     values.clear();
+
+    std::vector<std::tuple<int, std::string, double>> temp_records;
+
     for (const auto& record : records) {
         auto name_it = name_id_index.find(record.name_id);
         if (name_it != name_id_index.end()) {
-            ids.push_back(record.id);
-            names.push_back(this->names[name_it->second].name);
-            values.push_back(record.value);
+            temp_records.emplace_back(record.id, this->names[name_it->second].name, record.value);
+        } else {
+            std::stringstream log_message;
+            log_message << "Warning: Record with ID " << record.id << " has invalid name_id " << record.name_id;
+            if (log_mode == 1 || log_mode == 3) {
+                std::ofstream log_file("application_log.txt", std::ios_base::app);
+                if (log_file) {
+                    auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+                    log_file << std::put_time(std::localtime(&now), "%Y-%m-%d %H:%M:%S") 
+                             << " - " << log_message.str() << "\n";
+                }
+            }
+            if (log_mode == 2 || log_mode == 3) {
+                std::cout << log_message.str() << "\n";
+            }
+            temp_records.emplace_back(record.id, "[Неизвестное имя]", record.value);
         }
+    }
+
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Records before sorting:\n";
+        for (const auto& [id, name, value] : temp_records) {
+            std::cout << "ID=" << id << ", Name=" << name << ", Value=" << value << "\n";
+        }
+    }
+
+    std::sort(temp_records.begin(), temp_records.end(),
+              [](const auto& a, const auto& b) {
+                  return std::get<0>(a) < std::get<0>(b);
+              });
+
+    if (log_mode == 2 || log_mode == 3) {
+        std::cout << "Records after sorting:\n";
+        for (const auto& [id, name, value] : temp_records) {
+            std::cout << "ID=" << id << ", Name=" << name << ", Value=" << value << "\n";
+        }
+    }
+
+    for (const auto& [id, name, value] : temp_records) {
+        ids.push_back(id);
+        names.push_back(name);
+        values.push_back(value);
     }
 
     auto end = std::chrono::high_resolution_clock::now();

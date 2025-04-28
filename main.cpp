@@ -75,10 +75,10 @@ void print_padded(const std::string& str, size_t display_w, bool align_right = f
 
 void print_help() {
     std::cout << "Команды:\n"
-              << "  ПРИЛОЖИ <номер> <имя> <значение>           - добавить запись\n"
+              << "  ПРИЛОЖИ <номер> <имя> <значение>           - добавить запись (имя в кавычках, если содержит пробелы)\n"
               << "  ИЗЫМИ   <номер>                            - удалить запись\n"
               << "  ОБРЕСТИ <номер>                            - найти запись по ID\n"
-              << "  ОБРЕСТИ <имя>                              - найти записи по имени\n"
+              << "  ОБРЕСТИ <имя>                              - найти записи по имени (имя в кавычках, если содержит пробелы)\n"
               << "  ОБРЕСТИ_ЗНАЧЕНИЕ <значение>                - найти записи по точному значению\n"
               << "  ОБРЕСТИ_ДИАПАЗОН >мин<макс                 - найти записи в диапазоне значений (формат: >100<200)\n"
               << "  ОБРЕСТИ_ДИАПАЗОН больше <мин> и меньше <макс> - найти записи в диапазоне значений\n"
@@ -86,7 +86,7 @@ void print_help() {
               << "  ОБРЕСТИ_ДИАПАЗОН меньше <число>            - найти записи со значением меньше числа\n"
               << "  ОБРЕСТИ_ДИАПАЗОН >число                    - найти записи со значением больше числа\n"
               << "  ОБРЕСТИ_ДИАПАЗОН <число                    - найти записи со значением меньше числа\n"
-              << "  ОБНОВИ  <номер> <имя> <значение>           - обновить запись\n"
+              << "  ОБНОВИ  <номер> <имя> <значение>           - обновить запись (имя в кавычках, если содержит пробелы)\n"
               << "  ПЕРЕЧЕНЬ                                   - показать все записи\n"
               << "  АНАЛИЗ <команда> <параметры>               - проанализировать запрос\n"
               << "  ИСХОД                                      - выйти\n";
@@ -149,6 +149,29 @@ void print_records(const std::vector<int>& ids, const std::vector<std::string>& 
     std::cout << "+\n";
 }
 
+bool extract_name(std::istringstream& iss, std::string& name) {
+    std::string token;
+    if (!(iss >> std::ws >> token)) {
+        return false;
+    }
+
+    if (token.front() == '"') {
+        if (token.back() == '"') {
+            name = token.substr(1, token.length() - 2);
+            return true;
+        } else {
+            name = token.substr(1);
+            std::string rest;
+            std::getline(iss, rest, '"');
+            name += rest;
+            return !name.empty();
+        }
+    } else {
+        name = token;
+        return true;
+    }
+}
+
 int main() {
     std::cout << "Выберите режим логирования (0 - без логов, 1 - только файл, 2 - консоль, 3 - файл и консоль): ";
     int log_mode;
@@ -168,13 +191,15 @@ int main() {
         iss >> cmd;
 
         if (cmd == "ПРИЛОЖИ") {
-            int id; std::string name; double value;
-            if (iss >> id >> name >> value) {
+            int id;
+            std::string name;
+            double value;
+            if (iss >> id && extract_name(iss, name) && iss >> value) {
                 std::cout << (db.add_record(id, name, value)
                               ? "Запись добавлена.\n"
                               : "ID уже существует.\n");
             } else {
-                std::cout << "Неверный формат: ПРИЛОЖИ <id> <name> <value>\n";
+                std::cout << "Неверный формат: ПРИЛОЖИ <id> <name> <value> (имя в кавычках, если содержит пробелы)\n";
             }
         } else if (cmd == "ИЗЫМИ") {
             int id;
@@ -187,7 +212,7 @@ int main() {
             }
         } else if (cmd == "ОБРЕСТИ") {
             std::string token;
-            if (iss >> token) {
+            if (iss >> std::ws >> token) {
                 bool is_number = !token.empty() &&
                                  (std::isdigit(token[0]) || (token[0] == '-' && token.size() > 1)) &&
                                  std::all_of(token.begin() + (token[0] == '-' ? 1 : 0), token.end(), ::isdigit);
@@ -210,19 +235,26 @@ int main() {
                         std::cout << "Ошибка обработки ID: " << e.what() << "\n";
                     }
                 } else {
-                    std::string name = token;
-                    std::vector<int> ids;
-                    std::vector<double> values;
+                    std::string name;
+                    std::string rest;
+                    std::getline(iss, rest);
+                    std::istringstream name_iss(token + rest);
+                    if (extract_name(name_iss, name)) {
+                        std::vector<int> ids;
+                        std::vector<double> values;
         
-                    if (db.find_record_by_name(name, ids, values)) {
-                        std::vector<std::string> names(ids.size(), name);
-                        print_records(ids, names, values);
+                        if (db.find_record_by_name(name, ids, values)) {
+                            std::vector<std::string> names(ids.size(), name);
+                            print_records(ids, names, values);
+                        } else {
+                            std::cout << "Записи с именем '" << name << "' не найдены.\n";
+                        }
                     } else {
-                        std::cout << "Записи с именем '" << name << "' не найдены.\n";
+                        std::cout << "Неверный формат: ОБРЕСТИ <имя> (имя в кавычках, если содержит пробелы)\n";
                     }
                 }
             } else {
-                std::cout << "Неверный формат: ОБРЕСТИ <ID> или ОБРЕСТИ <имя>\n";
+                std::cout << "Неверный формат: ОБРЕСТИ <ID> или ОБРЕСТИ <имя> (имя в кавычках, если содержит пробелы)\n";
             }
         } else if (cmd == "ОБРЕСТИ_ЗНАЧЕНИЕ") {
             double value;
@@ -241,9 +273,8 @@ int main() {
         } else if (cmd == "ОБРЕСТИ_ДИАПАЗОН") {
             std::string range_input;
             std::getline(iss, range_input);
-            range_input.erase(0, range_input.find_first_not_of(" \t")); // Удаляем начальные пробелы
+            range_input.erase(0, range_input.find_first_not_of(" \t"));
 
-            // Формат 1: >min<max
             std::regex range_regex(R"(>\s*(\d+\.?\d*)\s*<\s*(\d+\.?\d*))");
             std::smatch range_match;
             if (std::regex_match(range_input, range_match, range_regex)) {
@@ -263,20 +294,17 @@ int main() {
                     std::cout << "Ошибка обработки диапазона: " << e.what() << "\n";
                 }
             }
-            // Формат 2: больше min и меньше max
             else {
                 std::istringstream range_iss(range_input);
                 std::string keyword1, keyword2, keyword3;
                 double value, min_value, max_value;
 
-                // Сохраняем позицию потока для проверки остаточного ввода
                 std::stringstream check_remainder(range_input);
                 check_remainder >> keyword1;
 
                 if (keyword1 == "больше") {
                     check_remainder >> value;
                     if (!(check_remainder >> keyword2)) {
-                        // Формат 3: больше число
                         try {
                             std::vector<int> ids;
                             std::vector<std::string> names;
@@ -291,7 +319,6 @@ int main() {
                             std::cout << "Ошибка обработки значения: " << e.what() << "\n";
                         }
                     } else if (keyword2 == "и" && check_remainder >> keyword3 >> max_value && keyword3 == "меньше") {
-                        // Формат 2: больше min и меньше max
                         min_value = value;
                         try {
                             std::vector<int> ids;
@@ -310,7 +337,6 @@ int main() {
                         std::cout << "Неверный формат: ожидается 'больше <число>' или 'больше <мин> и меньше <макс>'\n";
                     }
                 }
-                // Формат 4: меньше число
                 else if (keyword1 == "меньше" && check_remainder >> value) {
                     try {
                         std::vector<int> ids;
@@ -326,7 +352,6 @@ int main() {
                         std::cout << "Ошибка обработки значения: " << e.what() << "\n";
                     }
                 }
-                // Формат 5: >число
                 else if (std::regex_match(range_input, range_match, std::regex(R"(>\s*(\d+\.?\d*))"))) {
                     try {
                         double min_value = std::stod(range_match[1].str());
@@ -343,7 +368,6 @@ int main() {
                         std::cout << "Ошибка обработки значения: " << e.what() << "\n";
                     }
                 }
-                // Формат 6: <число
                 else if (std::regex_match(range_input, range_match, std::regex(R"(<\s*(\d+\.?\d*))"))) {
                     try {
                         double max_value = std::stod(range_match[1].str());
@@ -367,13 +391,15 @@ int main() {
                 }
             }
         } else if (cmd == "ОБНОВИ") {
-            int id; std::string name; double value;
-            if (iss >> id >> name >> value) {
+            int id;
+            std::string name;
+            double value;
+            if (iss >> id && extract_name(iss, name) && iss >> value) {
                 std::cout << (db.update_record(id, name, value)
                               ? "Запись обновлена.\n"
                               : "Запись с ID " + std::to_string(id) + " не найдена.\n");
             } else {
-                std::cout << "Неверный формат: ОБНОВИ <id> <name> <value>\n";
+                std::cout << "Неверный формат: ОБНОВИ <id> <name> <value> (имя в кавычках, если содержит пробелы)\n";
             }
         } else if (cmd == "ПЕРЕЧЕНЬ") {
             std::vector<int> ids;
