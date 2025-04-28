@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+database
+application_log.txt
+database.bin
